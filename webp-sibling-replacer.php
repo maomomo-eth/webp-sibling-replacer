@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WebP 同目录替换器
  * Description: 扫描文章正文和特色图；当同目录存在 WebP 文件时，可一键改用 WebP，并列出可人工删除的原 PNG/JPG 文件。
- * Version: 1.0.0
+ * Version: 1.0.1
  * Requires at least: 5.8
  * Requires PHP: 7.4
  * Author: Codex
@@ -15,7 +15,7 @@ defined( 'ABSPATH' ) || exit;
 
 final class WSR_WebP_Sibling_Replacer {
 	const SLUG        = 'webp-sibling-replacer';
-	const VERSION     = '1.0.0';
+	const VERSION     = '1.0.1';
 	const REPOSITORY  = 'maomomo-eth/webp-sibling-replacer';
 	const CACHE_KEY   = 'wsr_github_release';
 
@@ -124,7 +124,14 @@ final class WSR_WebP_Sibling_Replacer {
 		$notice = null;
 		if ( isset( $_POST['wsr_replace'] ) ) {
 			check_admin_referer( 'wsr_replace_webp' );
-			$notice = $this->replace_all( $items );
+			$selected_keys = isset( $_POST['wsr_items'] ) && is_array( $_POST['wsr_items'] ) ? array_map( 'sanitize_text_field', wp_unslash( $_POST['wsr_items'] ) ) : array();
+			$selected_items = array_filter(
+				$items,
+				function ( $item ) use ( $selected_keys ) {
+					return in_array( $this->item_key( $item ), $selected_keys, true );
+				}
+			);
+			$notice = empty( $selected_items ) ? '请至少勾选一项后再执行。' : $this->replace_selected( $selected_items, $items, ! empty( $_POST['wsr_delete_originals'] ) );
 			$items  = $this->scan();
 		}
 		?>
@@ -137,16 +144,18 @@ final class WSR_WebP_Sibling_Replacer {
 			<?php if ( empty( $items ) ) : ?>
 				<div class="notice notice-info"><p>没有找到可替换的图片。请确认 WebP 与原图同名、位于同一上传目录，且扩展名为 <code>.webp</code>。</p></div>
 			<?php else : ?>
-				<p>找到 <strong><?php echo esc_html( count( $items ) ); ?></strong> 个可替换引用。替换会修改文章内容或特色图设置；原文件不会被删除。</p>
+				<p>找到 <strong><?php echo esc_html( count( $items ) ); ?></strong> 个可替换引用。勾选需要处理的条目后再执行。</p>
 				<form method="post">
 					<?php wp_nonce_field( 'wsr_replace_webp' ); ?>
-					<p><button type="submit" class="button button-primary" name="wsr_replace" value="1">确认替换全部</button></p>
-				</form>
-				<table class="widefat striped">
-					<thead><tr><th>文章</th><th>位置</th><th>原图</th><th>将改为</th><th>原文件提示</th></tr></thead>
+					<p><label><input type="checkbox" name="wsr_delete_originals" value="1"> 替换成功后，同时删除所选原图</label></p>
+					<p class="description">删除不可恢复。若同一原图还有未勾选的扫描引用，插件会跳过删除以避免造成断图。</p>
+					<p><button type="submit" class="button button-primary" name="wsr_replace" value="1">替换所选项目</button></p>
+					<table class="widefat striped">
+						<thead><tr><th><input type="checkbox" id="wsr-select-all" aria-label="全选"></th><th>文章</th><th>位置</th><th>原图</th><th>将改为</th><th>原文件提示</th></tr></thead>
 					<tbody>
 					<?php foreach ( $items as $item ) : ?>
 						<tr>
+							<td><input type="checkbox" class="wsr-item" name="wsr_items[]" value="<?php echo esc_attr( $this->item_key( $item ) ); ?>" aria-label="选择此项目"></td>
 							<td><a href="<?php echo esc_url( get_edit_post_link( $item['post_id'] ) ); ?>"><?php echo esc_html( get_the_title( $item['post_id'] ) ?: '(无标题)' ); ?></a></td>
 							<td><?php echo esc_html( 'featured' === $item['kind'] ? '特色图' : '正文图片' ); ?></td>
 							<td><code><?php echo esc_html( $item['original_url'] ); ?></code></td>
@@ -156,6 +165,8 @@ final class WSR_WebP_Sibling_Replacer {
 					<?php endforeach; ?>
 					</tbody>
 				</table>
+				</form>
+				<script>document.getElementById('wsr-select-all').addEventListener('change',function(){document.querySelectorAll('.wsr-item').forEach(function(item){item.checked=this.checked;},this);});</script>
 			<?php endif; ?>
 			<p class="description">提示：此工具只处理 WordPress 上传目录中的本地 PNG、JPG、JPEG；外链、GIF、SVG 与已是 WebP 的图片会被跳过。</p>
 		</div>
@@ -253,10 +264,17 @@ final class WSR_WebP_Sibling_Replacer {
 		return $upload['baseurl'] . '/' . str_replace( ' ', '%20', $relative );
 	}
 
-	private function replace_all( $items ) {
+	private function item_key( $item ) {
+		return md5( $item['post_id'] . '|' . $item['kind'] . '|' . $item['original_url'] . '|' . $item['webp_file'] );
+	}
+
+	private function replace_selected( $items, $all_items, $delete_originals ) {
 		$content_updates = array();
 		$featured_updates = array();
+		$selected_files = array();
+		$replaced_files = array();
 		foreach ( $items as $item ) {
+			$selected_files[ $item['original_file'] ] = isset( $selected_files[ $item['original_file'] ] ) ? $selected_files[ $item['original_file'] ] + 1 : 1;
 			if ( 'content' === $item['kind'] ) {
 				$content_updates[ $item['post_id'] ][ $item['original_url'] ] = $item['webp_url'];
 			} else {
@@ -268,17 +286,52 @@ final class WSR_WebP_Sibling_Replacer {
 			$post = get_post( $post_id );
 			$new_content = strtr( $post->post_content, $replacements );
 			if ( $new_content !== $post->post_content ) {
-				wp_update_post( array( 'ID' => $post_id, 'post_content' => $new_content ) );
-				$changed++;
+				$result = wp_update_post( array( 'ID' => $post_id, 'post_content' => $new_content ), true );
+				if ( ! is_wp_error( $result ) ) {
+					$changed++;
+					foreach ( $items as $item ) {
+						if ( 'content' === $item['kind'] && (int) $post_id === (int) $item['post_id'] ) {
+							$replaced_files[ $item['original_file'] ] = isset( $replaced_files[ $item['original_file'] ] ) ? $replaced_files[ $item['original_file'] ] + 1 : 1;
+						}
+					}
+				}
 			}
 		}
 		foreach ( $featured_updates as $post_id => $item ) {
 			$webp_id = $this->attachment_for_file( $item['webp_file'] );
 			if ( $webp_id && set_post_thumbnail( $post_id, $webp_id ) ) {
 				$changed++;
+				$replaced_files[ $item['original_file'] ] = isset( $replaced_files[ $item['original_file'] ] ) ? $replaced_files[ $item['original_file'] ] + 1 : 1;
 			}
 		}
-		return sprintf( '已更新 %d 处引用。原图仍保留在服务器中，请确认前台显示正常后再人工删除。', $changed );
+		$deleted = 0;
+		$skipped = 0;
+		if ( $delete_originals ) {
+			$all_file_counts = array();
+			foreach ( $all_items as $item ) {
+				$all_file_counts[ $item['original_file'] ] = isset( $all_file_counts[ $item['original_file'] ] ) ? $all_file_counts[ $item['original_file'] ] + 1 : 1;
+			}
+			foreach ( $selected_files as $file => $selected_count ) {
+				if ( $selected_count === $all_file_counts[ $file ] && isset( $replaced_files[ $file ] ) && $selected_count === $replaced_files[ $file ] && is_file( $file ) ) {
+					wp_delete_file( $file );
+					if ( ! file_exists( $file ) ) {
+						$deleted++;
+						continue;
+					}
+				}
+				$skipped++;
+			}
+		}
+		$message = sprintf( '已更新 %d 处引用。', $changed );
+		if ( $delete_originals ) {
+			$message .= sprintf( '已删除 %d 个原图文件。', $deleted );
+			if ( $skipped ) {
+				$message .= sprintf( '为保护未选引用或替换失败的项目，保留了 %d 个原图文件。', $skipped );
+			}
+		} else {
+			$message .= '原图仍保留在服务器中。';
+		}
+		return $message;
 	}
 
 	private function attachment_for_file( $file ) {
