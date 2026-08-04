@@ -16,7 +16,7 @@ jobs:
       - name: 打包插件
         run: |
           mkdir -p dist/webp-sibling-replacer
-          cp webp-sibling-replacer.php readme.txt dist/webp-sibling-replacer/
+          cp -R webp-sibling-replacer.php readme.txt lib includes dist/webp-sibling-replacer/
           cd dist && zip -r webp-sibling-replacer.zip webp-sibling-replacer
       - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v2

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WebP 同目录替换器
  * Description: 扫描文章正文和特色图；当同目录存在 WebP 文件时，可一键改用 WebP，并列出可人工删除的原 PNG/JPG 文件。
- * Version: 1.0.1
+ * Version: 1.0.2
  * Requires at least: 5.8
  * Requires PHP: 7.4
  * Author: Codex
@@ -13,102 +13,17 @@
 
 defined( 'ABSPATH' ) || exit;
 
+require_once __DIR__ . '/lib/plugin-update-checker/plugin-update-checker.php';
+require_once __DIR__ . '/includes/class-wsr-github-updater.php';
+
+WSR_GitHub_Updater::init( __FILE__ );
+
 final class WSR_WebP_Sibling_Replacer {
 	const SLUG        = 'webp-sibling-replacer';
-	const VERSION     = '1.0.1';
-	const REPOSITORY  = 'maomomo-eth/webp-sibling-replacer';
-	const CACHE_KEY   = 'wsr_github_release';
+	const VERSION     = '1.0.2';
 
 	public function __construct() {
 		add_action( 'admin_menu', array( $this, 'add_menu' ) );
-		add_filter( 'pre_set_site_transient_update_plugins', array( $this, 'check_for_updates' ) );
-		add_filter( 'plugins_api', array( $this, 'plugin_information' ), 20, 3 );
-	}
-
-	/** 让 WordPress 从 GitHub Release 读取更新信息。 */
-	public function check_for_updates( $transient ) {
-		if ( empty( $transient->checked ) ) {
-			return $transient;
-		}
-		$release = $this->github_release();
-		if ( ! $release || empty( $release->version ) || version_compare( $release->version, self::VERSION, '<=' ) ) {
-			return $transient;
-		}
-		$plugin = plugin_basename( __FILE__ );
-		$transient->response[ $plugin ] = (object) array(
-			'slug'         => self::SLUG,
-			'plugin'       => $plugin,
-			'new_version'  => $release->version,
-			'url'          => 'https://github.com/' . self::REPOSITORY,
-			'package'      => $release->package,
-			'requires'     => '5.8',
-			'requires_php' => '7.4',
-		);
-		return $transient;
-	}
-
-	/** 为“查看版本详情”弹窗提供更新说明。 */
-	public function plugin_information( $result, $action, $args ) {
-		if ( 'plugin_information' !== $action || empty( $args->slug ) || self::SLUG !== $args->slug ) {
-			return $result;
-		}
-		$release = $this->github_release();
-		if ( ! $release ) {
-			return $result;
-		}
-		return (object) array(
-			'name'          => 'WebP 同目录替换器',
-			'slug'          => self::SLUG,
-			'version'       => $release->version,
-			'author'        => '<a href="https://github.com/maomomo-eth">maomomo.eth</a>',
-			'homepage'      => 'https://github.com/' . self::REPOSITORY,
-			'requires'      => '5.8',
-			'requires_php'  => '7.4',
-			'download_link' => $release->package,
-			'sections'      => array(
-				'description' => '扫描正文和特色图，并在存在同目录 WebP 时替换引用。',
-				'changelog'   => wp_kses_post( $release->notes ),
-			),
-		);
-	}
-
-	private function github_release() {
-		$cached = get_site_transient( self::CACHE_KEY );
-		if ( false !== $cached ) {
-			return $cached;
-		}
-		$response = wp_remote_get(
-			'https://api.github.com/repos/' . self::REPOSITORY . '/releases/latest',
-			array( 'timeout' => 10, 'headers' => array( 'Accept' => 'application/vnd.github+json' ) )
-		);
-		if ( is_wp_error( $response ) || 200 !== wp_remote_retrieve_response_code( $response ) ) {
-			set_site_transient( self::CACHE_KEY, null, HOUR_IN_SECONDS );
-			return null;
-		}
-		$data = json_decode( wp_remote_retrieve_body( $response ) );
-		if ( empty( $data->tag_name ) ) {
-			set_site_transient( self::CACHE_KEY, null, HOUR_IN_SECONDS );
-			return null;
-		}
-		$package = '';
-		if ( ! empty( $data->assets ) ) {
-			foreach ( $data->assets as $asset ) {
-				if ( self::SLUG . '.zip' === $asset->name && ! empty( $asset->browser_download_url ) ) {
-					$package = $asset->browser_download_url;
-					break;
-				}
-			}
-		}
-		if ( ! $package ) {
-			return null;
-		}
-		$release = (object) array(
-			'version' => ltrim( $data->tag_name, "vV \t\n\r\0\x0B" ),
-			'package' => esc_url_raw( $package ),
-			'notes'   => ! empty( $data->body ) ? $data->body : '暂无更新说明。',
-		);
-		set_site_transient( self::CACHE_KEY, $release, 12 * HOUR_IN_SECONDS );
-		return $release;
 	}
 
 	public function add_menu() {
