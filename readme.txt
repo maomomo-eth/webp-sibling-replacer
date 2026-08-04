@@ -4,7 +4,7 @@ Tags: webp, image, media, optimize
 Requires at least: 5.8
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.0.3
+Stable tag: 1.0.4
 License: GPL-2.0-or-later
 
 扫描文章正文和特色图。如果原 PNG、JPG 或 JPEG 同目录下有同名 WebP 文件，即可在后台一键改用 WebP。
@@ -18,6 +18,8 @@ License: GPL-2.0-or-later
 可勾选“替换成功后，同时删除所选原图”。若同一个原图还有未勾选的扫描引用，插件会保留文件以避免断图。
 
 工具页还会列出正文图片和特色图中的失效引用：上传目录本地文件缺失，以及外链图片返回 4xx/5xx 或请求失败的情况。
+
+扫描通过后台 AJAX 分批进行，每批处理 5 篇文章，避免大量文章或外链检查阻塞后台页面。
 
 插件内置 GitHub Release 更新检查器。插件列表会提供“检查更新”，发现新版本后可直接使用 WordPress 原生的“立即更新”按钮安装。
 
